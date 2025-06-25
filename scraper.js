@@ -34,7 +34,7 @@ const waitForGoogleAccountSelection = async (page) => {
 
         for (const selector of loginSelectors) {
             try {
-                await page.waitForSelector(selector, { timeout: 8000, state: 'visible' });
+                await page.waitForSelector(selector, { timeout: 10000, state: 'visible' }); // Aumentado para 10 segundos
                 console.log(`    Encontrado seletor de login: ${selector}`);
                 break;
             } catch (error) {
@@ -53,7 +53,7 @@ const waitForGoogleAccountSelection = async (page) => {
 
         for (const selector of selectionSelectors) {
             try {
-                await page.waitForSelector(selector, { timeout: 8000, state: 'visible' });
+                await page.waitForSelector(selector, { timeout: 10000, state: 'visible' }); // Aumentado para 10 segundos
                 console.log(`    Encontrado seletor de seleção: ${selector}`);
                 break;
             } catch (error) {
@@ -81,7 +81,7 @@ const waitForGoogleAccountSelection = async (page) => {
         let selectorFound = false;
         for (const selector of selectors) {
             try {
-                await page.waitForSelector(selector, { timeout: 8000, state: 'visible' });
+                await page.waitForSelector(selector, { timeout: 10000, state: 'visible' }); // Aumentado para 10 segundos
                 console.log(`    Encontrado seletor: ${selector}`);
                 selectorFound = true;
                 break;
@@ -97,14 +97,14 @@ const waitForGoogleAccountSelection = async (page) => {
 
     // Aguardar rede estabilizar com timeout maior
     try {
-        await page.waitForLoadState('networkidle', { timeout: 20000 });
+        await page.waitForLoadState('networkidle', { timeout: 30000 }); // Aumentado para 30 segundos
         console.log('    Rede estabilizada');
     } catch (error) {
         console.log('    Timeout aguardando rede estabilizar, continuando...');
     }
 
     // Aguardar um tempo adicional para JavaScript dinâmico
-    await new Promise(resolve => setTimeout(resolve, 6000));
+    await new Promise(resolve => setTimeout(resolve, 8000)); // Aumentado para 8 segundos
     console.log('    Aguarda adicional concluída');
 
     // Debug: Verificar estrutura da página
@@ -459,7 +459,29 @@ export const executarScraper = async ({ url, actions }) => {
 
                 // Para ações que podem causar navegação, aguardar um pouco para estabilizar
                 if (['click', 'goto'].includes(action.type)) {
-                    await new Promise(resolve => setTimeout(resolve, 500));
+                    await new Promise(resolve => setTimeout(resolve, 1000));
+                }
+
+                // NOVA VERIFICAÇÃO: Aguardar estabilização da página antes de executar ação
+                try {
+                    const currentUrl = currentPage.url();
+                    console.log(`  URL atual antes da ação: ${currentUrl}`);
+
+                    // Se estamos numa página do Google, aguardar carregamento extra
+                    if (currentUrl.includes('accounts.google.com')) {
+                        console.log('  Detectado Google - aguardando estabilização extra...');
+                        await new Promise(resolve => setTimeout(resolve, 3000));
+
+                        // Verificar se a página mudou durante a espera
+                        const newUrl = currentPage.url();
+                        if (newUrl !== currentUrl) {
+                            console.log(`  URL mudou durante espera: ${currentUrl} -> ${newUrl}`);
+                            // Aguardar mais um pouco para a nova página estabilizar
+                            await new Promise(resolve => setTimeout(resolve, 5000));
+                        }
+                    }
+                } catch (urlError) {
+                    console.log(`  Erro ao verificar URL: ${urlError.message}`);
                 }
 
                 // Configurar listener para popups se a próxima ação for switchToPopup
@@ -479,19 +501,29 @@ export const executarScraper = async ({ url, actions }) => {
                 // Para ações após switchToPopup, aguardar mais tempo para o DOM carregar
                 if (i > 0 && actions[i - 1].type === 'switchToPopup') {
                     console.log('  Aguardando DOM estabilizar após mudança de popup...');
-                    await new Promise(resolve => setTimeout(resolve, 8000));
+                    await new Promise(resolve => setTimeout(resolve, 12000)); // Aumentado para 12 segundos
+
+                    // Aguardar especificamente por páginas do Google
+                    const currentUrl = currentPage.url();
+                    if (currentUrl.includes('accounts.google.com')) {
+                        console.log('  Detectado popup do Google - aguardando carregamento específico...');
+                        await waitForGoogleAccountSelection(currentPage);
+                    }
 
                     // Se a próxima ação é um clique, verificar se o elemento já está disponível
                     if (action.type === 'click') {
                         console.log('  Verificando se elemento estará disponível após popup...');
                         try {
                             await currentPage.waitForSelector(`xpath=${action.xpath}`, {
-                                timeout: 15000,
+                                timeout: 20000, // Aumentado para 20 segundos
                                 state: 'visible'
                             });
                             console.log('  Elemento já detectado e visível');
                         } catch (elementError) {
                             console.log('  Elemento ainda não visível, continuando com tentativas...');
+
+                            // Screenshot para debug quando elemento não é encontrado
+                            await captureDebugScreenshot(currentPage, `elemento_nao_encontrado_apos_popup_acao_${i + 1}`);
                         }
                     }
                 }
@@ -532,6 +564,38 @@ export const executarScraper = async ({ url, actions }) => {
 
                         // Screenshot antes de qualquer tentativa de clique
                         await captureDebugScreenshot(currentPage, `pre_click_acao_${i + 1}`);
+
+                        // NOVA VERIFICAÇÃO: Se estamos numa página do Google, aguardar possíveis redirecionamentos
+                        const initialUrl = currentPage.url();
+                        if (initialUrl.includes('accounts.google.com')) {
+                            console.log('  Detectado Google - verificando estabilidade da página...');
+
+                            // Aguardar possíveis redirecionamentos automáticos
+                            let urlStable = false;
+                            let attempts = 0;
+                            const maxAttempts = 10;
+
+                            while (!urlStable && attempts < maxAttempts) {
+                                const currentUrl = currentPage.url();
+                                await new Promise(resolve => setTimeout(resolve, 1000));
+                                const newUrl = currentPage.url();
+
+                                if (currentUrl === newUrl) {
+                                    urlStable = true;
+                                    console.log(`  URL estabilizada: ${newUrl}`);
+                                } else {
+                                    console.log(`  URL mudou: ${currentUrl} -> ${newUrl}`);
+                                    attempts++;
+                                }
+                            }
+
+                            if (!urlStable) {
+                                console.log('  URL não estabilizou, continuando mesmo assim...');
+                            }
+
+                            // Screenshot após verificação de estabilidade
+                            await captureDebugScreenshot(currentPage, `pos_stability_check_acao_${i + 1}`);
+                        }
 
                         let clickSuccess = false;
                         let attempts = 3;
@@ -597,7 +661,7 @@ export const executarScraper = async ({ url, actions }) => {
                                                     await captureDebugScreenshot(currentPage, `pos_click_next_acao_${i + 1}`, 4 - attempts);
 
                                                     // Aguardar navegação
-                                                    await new Promise(resolve => setTimeout(resolve, 3000));
+                                                    await new Promise(resolve => setTimeout(resolve, 5000));
 
                                                     // Screenshot após aguardar navegação
                                                     await captureDebugScreenshot(currentPage, `pos_navigation_acao_${i + 1}`, 4 - attempts);
@@ -619,6 +683,9 @@ export const executarScraper = async ({ url, actions }) => {
                                                             await captureDebugScreenshot(currentPage, `nova_pagina_ativa_acao_${i + 1}`, 4 - attempts);
                                                         }
                                                     }
+
+                                                    // IMPORTANTE: Sair do loop de tentativas já que o login foi bem-sucedido
+                                                    attempts = 0; // Força a saída do while loop
                                                 } else {
                                                     console.log('  Botão Próximo não encontrado');
                                                     // Screenshot quando botão não é encontrado
@@ -647,7 +714,7 @@ export const executarScraper = async ({ url, actions }) => {
                                     await captureDebugScreenshot(currentPage, `pre_wait_selector_acao_${i + 1}`, 4 - attempts);
 
                                     await currentPage.waitForSelector(`xpath=${action.xpath}`, {
-                                        timeout: 30000,
+                                        timeout: 45000, // Aumentado para 45 segundos
                                         state: 'visible'
                                     });
 
@@ -1248,8 +1315,24 @@ export const executarScraper = async ({ url, actions }) => {
                         // Log final do estado
                         console.log(`  Página atual final: ${currentPage.url()}`);
 
-                        // Aguardar um pouco para a página estabilizar
-                        await new Promise(resolve => setTimeout(resolve, 3000));
+                        // Aguardar mais tempo para a página estabilizar, especialmente páginas do Google
+                        const finalUrl = currentPage.url();
+                        if (finalUrl.includes('accounts.google.com')) {
+                            console.log('  Detectado Google - aguardando estabilização adicional...');
+                            await new Promise(resolve => setTimeout(resolve, 8000)); // 8 segundos para Google
+
+                            // Aguardar especificamente por elementos do Google
+                            try {
+                                await waitForGoogleAccountSelection(currentPage);
+                            } catch (googleWaitError) {
+                                console.log(`  Erro ao aguardar Google: ${googleWaitError.message}`);
+                            }
+                        } else {
+                            await new Promise(resolve => setTimeout(resolve, 3000)); // 3 segundos para outras páginas
+                        }
+
+                        // Screenshot final após estabilização
+                        await captureDebugScreenshot(currentPage, `popup_estabilizado_acao_${i + 1}`);
                         break;
                     }
 

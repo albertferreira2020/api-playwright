@@ -182,7 +182,88 @@ export const executarScraper = async ({ url, actions }) => {
             '--disable-features=VizDisplayCompositor',
             '--allow-running-insecure-content',
             '--disable-extensions-file-access-check',
-            '--disable-ipc-flooding-protection'
+            '--disable-ipc-flooding-protection',
+            // Parâmetros para contornar bloqueios por IP e detecção
+            '--disable-blink-features=AutomationControlled',
+            '--disable-features=VizDisplayCompositor,VizServiceDisplayCompositor',
+            '--disable-background-timer-throttling',
+            '--disable-backgrounding-occluded-windows',
+            '--disable-renderer-backgrounding',
+            '--disable-features=TranslateUI',
+            '--disable-component-extensions-with-background-pages',
+            '--disable-default-apps',
+            '--mute-audio',
+            '--no-default-browser-check',
+            '--autoplay-policy=user-gesture-required',
+            '--disable-background-networking',
+            '--disable-background-media-downloading',
+            '--disable-client-side-phishing-detection',
+            '--disable-component-update',
+            '--disable-domain-reliability',
+            '--disable-features=AudioServiceOutOfProcess',
+            '--disable-hang-monitor',
+            '--disable-prompt-on-repost',
+            '--disable-sync',
+            '--disable-translate',
+            '--disable-field-trial-config',
+            '--disable-checking-optimization-guide-machine-learning-hints',
+            '--disable-optimization-guide-model-downloading',
+            '--force-color-profile=srgb',
+            '--metrics-recording-only',
+            '--use-mock-keychain',
+            '--disable-accelerated-2d-canvas',
+            '--disable-accelerated-jpeg-decoding',
+            '--disable-accelerated-mjpeg-decode',
+            '--disable-accelerated-video-decode',
+            '--disable-accelerated-video-encode',
+            '--disable-app-list-dismiss-on-blur',
+            '--disable-audio-output',
+            '--disable-breakpad',
+            '--disable-canvas-aa',
+            '--disable-2d-canvas-clip-aa',
+            '--disable-gl-drawing-for-tests',
+            '--disable-gl-extensions',
+            '--disable-histogram-customizer',
+            '--disable-in-process-stack-traces',
+            '--disable-logging',
+            '--disable-partial-raster',
+            '--disable-threaded-animation',
+            '--disable-threaded-scrolling',
+            '--disable-checker-imaging',
+            '--disable-new-content-rendering-timeout',
+            '--disable-hosted-app-shim-creation',
+            '--disable-add-to-shelf',
+            '--disable-datasaver-prompt',
+            '--disable-desktop-notifications',
+            '--disable-device-discovery-notifications',
+            '--disable-dinosaur-easter-egg',
+            '--disable-extensions',
+            '--disable-infobars',
+            '--disable-notifications',
+            '--disable-password-generation',
+            '--disable-permissions-api',
+            '--disable-plugins',
+            '--disable-print-preview',
+            '--disable-speech-api',
+            '--hide-scrollbars',
+            '--mute-audio',
+            '--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            '--lang=pt-BR',
+            '--accept-lang=pt-BR,pt;q=0.9,en;q=0.8',
+            // Configurações específicas para evitar detecção de bot
+            '--disable-automation',
+            '--disable-features=VizDisplayCompositor',
+            '--disable-default-apps',
+            '--disable-extensions',
+            '--disable-plugins',
+            '--disable-save-password-bubble',
+            '--disable-translate',
+            '--disable-web-security',
+            '--ignore-certificate-errors',
+            '--ignore-ssl-errors',
+            '--ignore-certificate-errors-spki-list',
+            '--ignore-certificate-errors-spki-list',
+            '--ignore-ssl-errors-spki-list'
         ]
     });
     console.log('Navegador iniciado');
@@ -192,13 +273,109 @@ export const executarScraper = async ({ url, actions }) => {
         userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         viewport: { width: 1920, height: 1080 },
         locale: 'pt-BR',
-        ignoreHTTPSErrors: true
+        ignoreHTTPSErrors: true,
+        // Configuração de geolocalização para Belo Horizonte, MG
+        geolocation: {
+            latitude: -19.9167,
+            longitude: -43.9345
+        },
+        permissions: ['geolocation'],
+        // Headers adicionais para mascarar automação
+        extraHTTPHeaders: {
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+            'Accept-Language': 'pt-BR,pt;q=0.9,en;q=0.8',
+            'Accept-Encoding': 'gzip, deflate, br',
+            'Connection': 'keep-alive',
+            'Upgrade-Insecure-Requests': '1',
+            'Sec-Fetch-Dest': 'document',
+            'Sec-Fetch-Mode': 'navigate',
+            'Sec-Fetch-Site': 'none',
+            'Sec-Fetch-User': '?1',
+            'Cache-Control': 'max-age=0',
+            'DNT': '1',
+            'Sec-GPC': '1'
+        },
+        // Configurações adicionais para mascarar automação
+        javaScriptEnabled: true,
+        acceptDownloads: false,
+        colorScheme: 'light',
+        reducedMotion: 'no-preference',
+        forcedColors: 'none',
+        strictSelectors: false
     });
     const page = await context.newPage();
 
     // Remove timeout de navegação e ações
     page.setDefaultTimeout(0);
     page.setDefaultNavigationTimeout(0);
+
+    // Mascarar indicadores de automação
+    await page.addInitScript(() => {
+        // Remove a propriedade webdriver
+        Object.defineProperty(navigator, 'webdriver', {
+            get: () => undefined,
+        });
+
+        // Sobrescrever o Chrome runtime
+        // eslint-disable-next-line no-undef
+        window.chrome = {
+            runtime: {},
+        };
+
+        // Mascarar outras propriedades de detecção
+        Object.defineProperty(navigator, 'plugins', {
+            get: () => [1, 2, 3, 4, 5],
+        });
+
+        Object.defineProperty(navigator, 'languages', {
+            get: () => ['pt-BR', 'pt', 'en'],
+        });
+
+        // Mascarar dimensões de tela
+        // eslint-disable-next-line no-undef
+        Object.defineProperty(screen, 'width', {
+            get: () => 1920,
+        });
+        // eslint-disable-next-line no-undef
+        Object.defineProperty(screen, 'height', {
+            get: () => 1080,
+        });
+
+        // Remover indicadores de headless
+        Object.defineProperty(navigator, 'maxTouchPoints', {
+            get: () => 0,
+        });
+
+        // Adicionar timezone brasileiro
+        Object.defineProperty(Intl.DateTimeFormat.prototype, 'resolvedOptions', {
+            value: function () {
+                return {
+                    ...this.constructor.prototype.resolvedOptions.call(this),
+                    timeZone: 'America/Sao_Paulo'
+                };
+            }
+        });
+
+        // Simular conexão de internet real
+        Object.defineProperty(navigator, 'connection', {
+            get: () => ({
+                effectiveType: '4g',
+                downlink: 10,
+                rtt: 50,
+                saveData: false
+            }),
+        });
+
+        // Configurar fuso horário
+        try {
+            Object.defineProperty(Date.prototype, 'getTimezoneOffset', {
+                value: () => 180 // UTC-3 (Brasília)
+            });
+        } catch (e) {
+            // Ignorar erros de configuração de timezone
+            console.log('Erro ao configurar timezone:', e);
+        }
+    });
 
     console.log('Nova página criada');
 

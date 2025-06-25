@@ -1,5 +1,40 @@
 import { chromium } from 'playwright';
 
+const waitForGoogleAccountSelection = async (page) => {
+    console.log('    Aguardando página de seleção de conta do Google...');
+
+    // Aguardar múltiplos indicadores que a página carregou
+    const selectors = [
+        'div[data-email]',
+        '[data-identifier]',
+        '.w6VTHd', // Classe comum em páginas do Google
+        '[role="button"]',
+        '.VV3oRb' // Outro seletor comum
+    ];
+
+    for (const selector of selectors) {
+        try {
+            await page.waitForSelector(selector, { timeout: 10000, state: 'visible' });
+            console.log(`    Encontrado seletor: ${selector}`);
+            break;
+        } catch (error) {
+            console.log(`    Seletor ${selector} não encontrado, tentando próximo...`);
+        }
+    }
+
+    // Aguardar rede estabilizar
+    try {
+        await page.waitForLoadState('networkidle', { timeout: 15000 });
+        console.log('    Rede estabilizada');
+    } catch (error) {
+        console.log('    Timeout aguardando rede estabilizar');
+    }
+
+    // Aguardar um tempo adicional para JavaScript dinâmico
+    await new Promise(resolve => setTimeout(resolve, 4000));
+    console.log('    Aguarda adicional concluída');
+};
+
 const waitForSeconds = async (page, seconds) => {
     // Verificar se a página ainda está ativa antes de executar o wait
     if (page.isClosed()) {
@@ -48,7 +83,12 @@ export const executarScraper = async ({ url, actions }) => {
             '--no-first-run',
             '--no-zygote',
             '--single-process',
-            '--disable-web-security'
+            '--disable-web-security',
+            '--disable-popup-blocking', // Permitir popups
+            '--disable-features=VizDisplayCompositor',
+            '--allow-running-insecure-content',
+            '--disable-extensions-file-access-check',
+            '--disable-ipc-flooding-protection'
         ]
     });
     console.log('Navegador iniciado');
@@ -96,10 +136,38 @@ export const executarScraper = async ({ url, actions }) => {
                     await new Promise(resolve => setTimeout(resolve, 500));
                 }
 
+                // Configurar listener para popups se a próxima ação for switchToPopup
+                let popupListener = null;
+                let pendingPopup = null;
+                if (i < actions.length - 1 && actions[i + 1].type === 'switchToPopup') {
+                    console.log('  Configurando listener para popup (próxima ação)...');
+                    popupListener = (page) => {
+                        console.log(`  Popup detectado antecipadamente: ${page.url()}`);
+                        if (!pendingPopup) {
+                            pendingPopup = page;
+                        }
+                    };
+                    context.on('page', popupListener);
+                }
+
                 // Para ações após switchToPopup, aguardar mais tempo para o DOM carregar
                 if (i > 0 && actions[i - 1].type === 'switchToPopup') {
                     console.log('  Aguardando DOM estabilizar após mudança de popup...');
-                    await new Promise(resolve => setTimeout(resolve, 5000));
+                    await new Promise(resolve => setTimeout(resolve, 8000));
+
+                    // Se a próxima ação é um clique, verificar se o elemento já está disponível
+                    if (action.type === 'click') {
+                        console.log('  Verificando se elemento estará disponível após popup...');
+                        try {
+                            await currentPage.waitForSelector(`xpath=${action.xpath}`, {
+                                timeout: 15000,
+                                state: 'visible'
+                            });
+                            console.log('  Elemento já detectado e visível');
+                        } catch (elementError) {
+                            console.log('  Elemento ainda não visível, continuando com tentativas...');
+                        }
+                    }
                 }
 
                 switch (action.type) {
@@ -126,7 +194,7 @@ export const executarScraper = async ({ url, actions }) => {
                         }
                         break;
 
-                    case 'click':
+                    case 'click': {
                         console.log(`  Clicando no elemento: ${action.xpath}`);
                         let clickSuccess = false;
                         let attempts = 3;
@@ -140,6 +208,13 @@ export const executarScraper = async ({ url, actions }) => {
 
                                 // Aguardar que o elemento esteja disponível na página
                                 console.log(`  Aguardando elemento ficar disponível...`);
+
+                                // Se estamos no Google, aguardar indicadores específicos
+                                if (currentPage.url().includes('accounts.google.com')) {
+                                    console.log('  Detectado Google Accounts, aguardando carregamento específico...');
+                                    await waitForGoogleAccountSelection(currentPage);
+                                }
+
                                 await currentPage.waitForSelector(`xpath=${action.xpath}`, {
                                     timeout: 30000,
                                     state: 'visible'
@@ -189,6 +264,26 @@ export const executarScraper = async ({ url, actions }) => {
                                 } else {
                                     // Última tentativa com método alternativo
                                     console.log(`  Última tentativa com método alternativo...`);
+
+                                    // Debug: listar todos os elementos div com data-email
+                                    try {
+                                        console.log('  Debug: Procurando elementos com data-email...');
+                                        const emailElements = await currentPage.locator('div[data-email]').all();
+                                        console.log(`  Encontrados ${emailElements.length} elementos com data-email`);
+
+                                        for (let i = 0; i < emailElements.length; i++) {
+                                            const email = await emailElements[i].getAttribute('data-email');
+                                            console.log(`    Elemento ${i + 1}: data-email="${email}"`);
+                                        }
+
+                                        // Tentar encontrar por texto também
+                                        const textElements = await currentPage.locator('text=albert.ferreira@itlean.com.br').all();
+                                        console.log(`  Encontrados ${textElements.length} elementos com texto do email`);
+
+                                    } catch (debugError) {
+                                        console.log(`  Erro no debug: ${debugError.message}`);
+                                    }
+
                                     try {
                                         const element = await currentPage.locator(`xpath=${action.xpath}`).first();
                                         if (await element.count() === 0) {
@@ -223,6 +318,7 @@ export const executarScraper = async ({ url, actions }) => {
                             throw new Error(`Falha ao clicar no elemento após 3 tentativas: ${action.xpath}`);
                         }
                         break;
+                    }
 
                     case 'type':
                         console.log(`  Digitando no campo: ${action.xpath}`);
@@ -267,58 +363,206 @@ export const executarScraper = async ({ url, actions }) => {
 
                     case 'switchToPopup': {
                         console.log('  Alternando para popup/nova aba...');
-                        let popupFound = false;
-                        let attempts = 3;
 
-                        while (attempts > 0 && !popupFound) {
-                            try {
-                                console.log(`  Tentativa ${4 - attempts}/3 de localizar popup`);
+                        // Verificar se já temos um popup detectado da ação anterior
+                        let detectedPopup = null;
+                        if (i > 0) {
+                            // Tentar encontrar popup detectado na ação anterior
+                            const currentPages = context.pages();
+                            const initialPageCount = currentPages.length;
 
-                                // Aguardar um pouco mais para dar tempo do popup abrir
-                                const popupPromise = context.waitForEvent('page', { timeout: 90000 }); // 90 segundos timeout
-                                const popup = await popupPromise;
-
-                                // Aguardar que a nova aba carregue completamente
-                                await popup.waitForLoadState('networkidle', { timeout: 30000 });
-
-                                // Remove timeout da nova página também
-                                popup.setDefaultTimeout(0);
-                                popup.setDefaultNavigationTimeout(0);
-                                currentPage = popup;
-                                console.log('  Alternado para popup com sucesso');
-                                popupFound = true;
-
-                            } catch (error) {
-                                attempts--;
-                                console.log(`  Erro aguardando popup (tentativas restantes: ${attempts}): ${error.message}`);
-
-                                if (attempts > 0) {
-                                    console.log('  Aguardando 5 segundos antes da próxima tentativa...');
-                                    await new Promise(resolve => setTimeout(resolve, 5000));
+                            // Procurar por páginas do Google criadas recentemente
+                            for (const page of currentPages) {
+                                const url = page.url();
+                                if (url.includes('accounts.google.com') || url.includes('google.com')) {
+                                    if (page !== currentPage) { // Não é a página atual
+                                        console.log(`  Popup já detectado: ${url}`);
+                                        detectedPopup = page;
+                                        break;
+                                    }
                                 }
                             }
                         }
+
+                        if (detectedPopup) {
+                            console.log('  Usando popup já detectado!');
+                            try {
+                                await detectedPopup.waitForLoadState('domcontentloaded', { timeout: 15000 });
+                                detectedPopup.setDefaultTimeout(0);
+                                detectedPopup.setDefaultNavigationTimeout(0);
+                                currentPage = detectedPopup;
+                                console.log('  Alternado para popup detectado com sucesso');
+                                await new Promise(resolve => setTimeout(resolve, 3000));
+                                break;
+                            } catch (error) {
+                                console.log(`  Erro ao usar popup detectado: ${error.message}`);
+                                // Continuar com método normal
+                            }
+                        }
+
+                        // Configurar listener para capturar novas páginas antes de tentar detectá-las
+                        let newPagePromise = null;
+                        const pageCreatedHandler = (page) => {
+                            console.log(`  Nova página criada com URL: ${page.url()}`);
+                            if (!newPagePromise) {
+                                newPagePromise = page;
+                            }
+                        };
+                        context.on('page', pageCreatedHandler);
+
+                        // Contar páginas antes da ação
+                        const initialPageCount = context.pages().length;
+                        console.log(`  Páginas iniciais: ${initialPageCount}`);
+
+                        let popupFound = false;
+                        let waitTime = 0;
+                        const maxWaitTime = 60000; // Reduzir para 1 minuto
+                        const checkInterval = 1000; // Verificar a cada 1 segundo
+
+                        // Aguardar um tempo inicial para o popup aparecer
+                        await new Promise(resolve => setTimeout(resolve, 3000));
+
+                        while (waitTime < maxWaitTime && !popupFound) {
+                            console.log(`  Aguardando popup... (${waitTime / 1000}s/${maxWaitTime / 1000}s)`);
+
+                            await new Promise(resolve => setTimeout(resolve, checkInterval));
+                            waitTime += checkInterval;
+
+                            // Verificar se novas páginas foram criadas via listener
+                            if (newPagePromise) {
+                                console.log('  Nova página detectada via listener!');
+                                const newPage = newPagePromise;
+
+                                try {
+                                    // Aguardar a nova página começar a carregar
+                                    await new Promise(resolve => setTimeout(resolve, 2000));
+
+                                    // Verificar se a página tem conteúdo relevante
+                                    const url = newPage.url();
+                                    console.log(`  URL da nova página: ${url}`);
+
+                                    if (url.includes('accounts.google.com') || url.includes('google.com') || url !== 'about:blank') {
+                                        console.log('  Página válida detectada!');
+
+                                        // Aguardar que a nova aba carregue
+                                        try {
+                                            await newPage.waitForLoadState('domcontentloaded', { timeout: 15000 });
+                                            console.log('  DOM carregado');
+                                        } catch (loadError) {
+                                            console.log('  Continuando sem aguardar DOM...');
+                                        }
+
+                                        // Configurar timeouts
+                                        newPage.setDefaultTimeout(0);
+                                        newPage.setDefaultNavigationTimeout(0);
+
+                                        currentPage = newPage;
+                                        console.log('  Alternado para popup com sucesso');
+                                        popupFound = true;
+                                    } else {
+                                        console.log('  Página não é válida, continuando aguardando...');
+                                        newPagePromise = null; // Reset para aguardar próxima página
+                                    }
+                                } catch (error) {
+                                    console.log(`  Erro ao processar nova página: ${error.message}`);
+                                    newPagePromise = null; // Reset em caso de erro
+                                }
+                            }
+
+                            // Verificar se novas páginas foram criadas (método alternativo)
+                            if (!popupFound) {
+                                const currentPages = context.pages();
+                                console.log(`  Páginas atuais: ${currentPages.length}`);
+
+                                if (currentPages.length > initialPageCount) {
+                                    console.log('  Nova página detectada via contagem!');
+
+                                    // Pegar a página mais recente que não seja about:blank
+                                    const validPages = currentPages.filter(p => p.url() !== 'about:blank');
+                                    if (validPages.length > 0) {
+                                        const newPage = validPages[validPages.length - 1];
+                                        const url = newPage.url();
+                                        console.log(`  Tentando página: ${url}`);
+
+                                        if (url.includes('accounts.google.com') || url.includes('google.com')) {
+                                            try {
+                                                await newPage.waitForLoadState('domcontentloaded', { timeout: 10000 });
+                                                newPage.setDefaultTimeout(0);
+                                                newPage.setDefaultNavigationTimeout(0);
+                                                currentPage = newPage;
+                                                console.log('  Alternado para popup (método alternativo)');
+                                                popupFound = true;
+                                            } catch (error) {
+                                                console.log(`  Erro no método alternativo: ${error.message}`);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // Remover listener
+                        context.off('page', pageCreatedHandler);
 
                         if (!popupFound) {
-                            console.log('  Timeout aguardando popup, tentando última página...');
-                            // Tenta pegar a última página criada
-                            const pages = context.pages();
-                            if (pages.length > 1) {
-                                currentPage = pages[pages.length - 1];
-                                currentPage.setDefaultTimeout(0);
-                                currentPage.setDefaultNavigationTimeout(0);
-                                console.log('  Alternado para última página disponível');
+                            console.log('  Timeout aguardando popup, tentando estratégias alternativas...');
 
-                                // Aguardar a página carregar
-                                try {
-                                    await currentPage.waitForLoadState('networkidle', { timeout: 10000 });
-                                } catch (loadError) {
-                                    console.log('  Aviso: Página pode não ter carregado completamente');
+                            // Estratégia 1: Verificar se o popup já existe na página atual
+                            try {
+                                console.log('  Verificando se popup está na mesma página...');
+                                const currentUrl = currentPage.url();
+                                console.log(`  URL atual: ${currentUrl}`);
+
+                                if (currentUrl.includes('accounts.google.com') || currentUrl.includes('google.com')) {
+                                    console.log('  Detectado que já estamos na página do Google - popup pode ter sido redirecionamento');
+                                    popupFound = true;
+                                } else {
+                                    // Verificar se existe algum iframe com conteúdo do Google
+                                    const frames = currentPage.frames();
+                                    console.log(`  Verificando ${frames.length} frames...`);
+
+                                    for (const frame of frames) {
+                                        try {
+                                            const frameUrl = frame.url();
+                                            console.log(`  Frame URL: ${frameUrl}`);
+                                            if (frameUrl.includes('accounts.google.com') || frameUrl.includes('google.com')) {
+                                                console.log('  Encontrado frame do Google!');
+                                                popupFound = true;
+                                                break;
+                                            }
+                                        } catch (frameError) {
+                                            console.log(`  Erro ao verificar frame: ${frameError.message}`);
+                                        }
+                                    }
                                 }
-                            } else {
-                                throw new Error('Nenhuma nova página/popup encontrada após múltiplas tentativas');
+                            } catch (strategyError) {
+                                console.log(`  Erro na estratégia alternativa: ${strategyError.message}`);
+                            }
+
+                            // Estratégia 2: Se ainda não encontrou, tentar qualquer nova página
+                            if (!popupFound) {
+                                const pages = context.pages();
+                                if (pages.length > initialPageCount) {
+                                    // Tentar a última página criada
+                                    currentPage = pages[pages.length - 1];
+                                    currentPage.setDefaultTimeout(0);
+                                    currentPage.setDefaultNavigationTimeout(0);
+                                    console.log(`  Alternado para última página disponível: ${currentPage.url()}`);
+                                    popupFound = true;
+                                } else {
+                                    // Estratégia 3: Assumir que o popup pode estar bloqueado e continuar na mesma página
+                                    console.log('  Popup pode estar bloqueado, continuando na página atual...');
+                                    console.log('  AVISO: Popup não detectado - pode ser necessário ajustar as próximas ações');
+                                    popupFound = true; // Continuar execução
+                                }
                             }
                         }
+
+                        // Log final do estado
+                        console.log(`  Página atual final: ${currentPage.url()}`);
+
+                        // Aguardar um pouco para a página estabilizar
+                        await new Promise(resolve => setTimeout(resolve, 3000));
                         break;
                     }
 
@@ -415,6 +659,14 @@ export const executarScraper = async ({ url, actions }) => {
                     default:
                         console.log(`  Tipo de ação não reconhecido: ${action.type}`);
                         break;
+                }
+
+                // Limpar listener se foi configurado
+                if (popupListener) {
+                    context.off('page', popupListener);
+                    if (pendingPopup) {
+                        console.log('  Popup foi detectado antecipadamente para próxima ação');
+                    }
                 }
 
             } catch (actionError) {

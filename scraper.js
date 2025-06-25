@@ -29,7 +29,13 @@ const waitForGoogleAccountSelection = async (page) => {
             'input[id="identifierId"]',
             '#identifierId',
             'input[name="identifier"]',
-            '[data-initial-value]'
+            'input[name="Email"]',
+            'input[autocomplete="email"]',
+            'input[autocomplete="username"]',
+            '[data-initial-value]',
+            'input[aria-label*="email"]',
+            'input[placeholder*="email"]',
+            'input[placeholder*="Email"]'
         ];
 
         for (const selector of loginSelectors) {
@@ -104,7 +110,7 @@ const waitForGoogleAccountSelection = async (page) => {
     }
 
     // Aguardar um tempo adicional para JavaScript dinâmico
-    await new Promise(resolve => setTimeout(resolve, 8000)); // Aumentado para 8 segundos
+    await new Promise(resolve => setTimeout(resolve, 12000)); // Aumentado para 12 segundos
     console.log('    Aguarda adicional concluída');
 
     // Debug: Verificar estrutura da página
@@ -633,34 +639,82 @@ export const executarScraper = async ({ url, actions }) => {
                                         await captureDebugScreenshot(currentPage, `pre_auto_login_acao_${i + 1}`, 4 - attempts);
 
                                         try {
-                                            const emailInput = await currentPage.locator('input[type="email"], #identifierId').first();
+                                            // Extrair email do xpath original da ação
+                                            const emailMatch = action.xpath.match(/data-email='([^']+)'/);
+                                            if (!emailMatch) {
+                                                console.log('  Não foi possível extrair email do xpath da ação');
+                                                throw new Error('Email não encontrado no xpath');
+                                            }
+
+                                            const emailToUse = emailMatch[1];
+                                            console.log(`  Email extraído: ${emailToUse}`);
+
+                                            const emailInput = await currentPage.locator('input[type="email"], #identifierId, input[name="identifier"], input[autocomplete="email"], input[autocomplete="username"]').first();
                                             if (await emailInput.count() > 0) {
                                                 console.log('  Preenchendo campo de email no login...');
-                                                await emailInput.fill('albert.ferreira@itlean.com.br');
+                                                await emailInput.clear();
+                                                await emailInput.fill(emailToUse);
 
                                                 // Screenshot após preencher email
                                                 await captureDebugScreenshot(currentPage, `pos_fill_email_acao_${i + 1}`, 4 - attempts);
 
                                                 // Aguardar um pouco
-                                                await new Promise(resolve => setTimeout(resolve, 1000));
+                                                await new Promise(resolve => setTimeout(resolve, 2000));
 
-                                                // Procurar botão "Próximo" ou "Continuar"
-                                                const nextButton = await currentPage.locator('button:has-text("Próximo"), button:has-text("Next"), button:has-text("Continuar"), button[id*="next"], button[id*="Next"], [jsname="LgbsSe"], button[type="submit"], #identifierNext, [data-primary="true"]').first();
-                                                if (await nextButton.count() > 0) {
+                                                // Procurar botão "Próximo" ou "Continuar" com mais seletores
+                                                const nextSelectors = [
+                                                    '#identifierNext',
+                                                    'button[id="identifierNext"]',
+                                                    'button:has-text("Próximo")',
+                                                    'button:has-text("Next")',
+                                                    'button:has-text("Continuar")',
+                                                    'button:has-text("Avançar")',
+                                                    'button[type="submit"]',
+                                                    '[jsname="LgbsSe"]',
+                                                    '[data-primary="true"]',
+                                                    'button[id*="next"]',
+                                                    'button[id*="Next"]'
+                                                ];
+
+                                                let nextButton = null;
+                                                for (const selector of nextSelectors) {
+                                                    try {
+                                                        await currentPage.waitForSelector(selector, { timeout: 3000, state: 'visible' });
+                                                        nextButton = currentPage.locator(selector);
+                                                        console.log(`  Botão próximo encontrado: ${selector}`);
+                                                        break;
+                                                    } catch (e) {
+                                                        console.log(`  Seletor ${selector} não encontrado`);
+                                                    }
+                                                }
+
+                                                if (nextButton) {
                                                     console.log('  Clicando no botão Próximo...');
 
                                                     // Screenshot antes de clicar no botão
                                                     await captureDebugScreenshot(currentPage, `pre_click_next_acao_${i + 1}`, 4 - attempts);
 
                                                     await nextButton.click();
-                                                    clickSuccess = true;
-
                                                     console.log('  Login executado com sucesso via estratégia automática!');
 
-                                                    // Screenshot após clicar no botão
+                                                    // Aguardar navegação mais tempo e com estratégias diferentes
+                                                    console.log('  Aguardando navegação após inserir email...');
+
+                                                    // Primeiro aguardar um tempo inicial
+                                                    await new Promise(resolve => setTimeout(resolve, 3000));
+
+                                                    // Screenshot logo após clicar
                                                     await captureDebugScreenshot(currentPage, `pos_click_next_acao_${i + 1}`, 4 - attempts);
 
-                                                    // Aguardar navegação
+                                                    // Aguardar estabilização da rede
+                                                    try {
+                                                        await currentPage.waitForLoadState('networkidle', { timeout: 15000 });
+                                                        console.log('  Rede estabilizada após inserir email');
+                                                    } catch (networkError) {
+                                                        console.log('  Timeout aguardando rede estabilizar');
+                                                    }
+
+                                                    // Aguardar mais um tempo para carregamento completo
                                                     await new Promise(resolve => setTimeout(resolve, 5000));
 
                                                     // Screenshot após aguardar navegação
@@ -670,6 +724,7 @@ export const executarScraper = async ({ url, actions }) => {
                                                     const newUrl = currentPage.url();
                                                     console.log(`  Nova URL após inserir email: ${newUrl}`);
 
+                                                    // Verificar se a página ainda está ativa
                                                     if (currentPage.isClosed()) {
                                                         console.log('  Página foi fechada após inserir email, procurando página ativa...');
                                                         const availablePages = context.pages().filter(p => !p.isClosed());
@@ -681,6 +736,51 @@ export const executarScraper = async ({ url, actions }) => {
 
                                                             // Screenshot da nova página ativa
                                                             await captureDebugScreenshot(currentPage, `nova_pagina_ativa_acao_${i + 1}`, 4 - attempts);
+                                                        }
+                                                    }
+
+                                                    // Verificar se agora temos elementos de seleção de conta
+                                                    console.log('  Verificando se a página agora tem seleção de conta...');
+
+                                                    const accountElements = await currentPage.locator('div[data-email], [data-identifier], li[data-account-type]').count();
+                                                    console.log(`  Elementos de conta encontrados: ${accountElements}`);
+
+                                                    if (accountElements > 0) {
+                                                        console.log('  Página de seleção de conta detectada! Continuando execução...');
+                                                        clickSuccess = true;
+
+                                                        // SE TEMOS ELEMENTOS DE CONTA, TENTAR EXECUTAR A AÇÃO ORIGINAL AGORA
+                                                        try {
+                                                            console.log('  Tentando executar a ação original agora que temos seleção de conta...');
+                                                            await new Promise(resolve => setTimeout(resolve, 2000)); // Aguardar estabilização
+
+                                                            // Verificar se o elemento da ação original existe
+                                                            const originalElementCount = await currentPage.locator(`xpath=${action.xpath}`).count();
+                                                            if (originalElementCount > 0) {
+                                                                console.log('  Elemento da ação original encontrado! Executando clique...');
+                                                                await captureDebugScreenshot(currentPage, `pre_original_action_acao_${i + 1}`, 4 - attempts);
+
+                                                                await currentPage.click(`xpath=${action.xpath}`, { timeout: 10000 });
+                                                                console.log('  Ação original executada com sucesso após auto-login!');
+
+                                                                await captureDebugScreenshot(currentPage, `pos_original_action_acao_${i + 1}`, 4 - attempts);
+                                                            } else {
+                                                                console.log('  Elemento da ação original não encontrado ainda, será tratado no fluxo normal');
+                                                            }
+                                                        } catch (originalActionError) {
+                                                            console.log(`  Erro ao executar ação original: ${originalActionError.message}`);
+                                                            console.log('  Continuando com fluxo normal...');
+                                                        }
+
+                                                    } else {
+                                                        // Verificar se estamos numa página de senha
+                                                        const passwordElements = await currentPage.locator('input[type="password"], input[name="password"]').count();
+                                                        if (passwordElements > 0) {
+                                                            console.log('  Página de senha detectada! Continuando execução...');
+                                                            clickSuccess = true;
+                                                        } else {
+                                                            console.log('  Tipo de página após login não identificado, mas continuando...');
+                                                            clickSuccess = true;
                                                         }
                                                     }
 

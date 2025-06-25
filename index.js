@@ -83,10 +83,11 @@ app.get("/screenshots", (req, res) => {
                     url: `/screenshots/${file}`,
                     size: `${(stats.size / 1024 / 1024).toFixed(2)} MB`,
                     created: stats.ctime.toLocaleString('pt-BR'),
-                    modified: stats.mtime.toLocaleString('pt-BR')
+                    modified: stats.mtime.toLocaleString('pt-BR'),
+                    modifiedTimestamp: stats.mtime.getTime() // Timestamp para ordenação
                 };
             })
-            .sort((a, b) => new Date(b.modified) - new Date(a.modified)); // Mais recentes primeiro
+            .sort((a, b) => b.modifiedTimestamp - a.modifiedTimestamp); // Mais recentes primeiro
 
         res.json({
             total: files.length,

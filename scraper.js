@@ -1,4 +1,6 @@
 import { chromium } from 'playwright';
+import fs from 'fs';
+import path from 'path';
 
 const waitForGoogleAccountSelection = async (page) => {
     console.log('    Aguardando página de seleção de conta do Google...');
@@ -140,6 +142,59 @@ const waitForSeconds = async (page, seconds) => {
 const getTodayDate = () => {
     const today = new Date();
     return today.toISOString().slice(0, 10); // yyyy-mm-dd
+};
+
+const captureDebugScreenshot = async (page, stepName, attempt = null) => {
+    try {
+        if (page.isClosed()) {
+            console.log(`  ⚠️ Página fechada, pulando screenshot: ${stepName}`);
+            return null;
+        }
+
+        const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+        const attemptSuffix = attempt ? `_tentativa_${attempt}` : '';
+        const filename = `debug_${stepName}${attemptSuffix}_${timestamp}.jpg`;
+        const screenshotPath = `/app/screenshots/${filename}`;
+
+        console.log(`  📸 Iniciando captura de screenshot: ${filename}`);
+
+        // Garantir que o diretório existe
+        const screenshotDir = path.dirname(screenshotPath);
+        if (!fs.existsSync(screenshotDir)) {
+            console.log(`  📁 Criando diretório: ${screenshotDir}`);
+            fs.mkdirSync(screenshotDir, { recursive: true });
+        }
+
+        // Capturar informações da página para debug
+        try {
+            const url = page.url();
+            const title = await page.title();
+            console.log(`  📄 Página: ${title} - ${url}`);
+        } catch (pageInfoError) {
+            console.log(`  ⚠️ Erro ao obter info da página: ${pageInfoError.message}`);
+        }
+
+        await page.screenshot({
+            path: screenshotPath,
+            fullPage: true,
+            type: 'jpeg',
+            quality: 80
+        });
+
+        // Verificar se o arquivo foi criado
+        if (fs.existsSync(screenshotPath)) {
+            const stats = fs.statSync(screenshotPath);
+            console.log(`  ✅ Screenshot salvo: ${filename} (${(stats.size / 1024).toFixed(1)} KB)`);
+        } else {
+            console.log(`  ❌ Arquivo de screenshot não foi criado: ${filename}`);
+        }
+
+        return filename;
+    } catch (error) {
+        console.log(`  ❌ Erro ao capturar screenshot '${stepName}': ${error.message}`);
+        console.log(`  Stack trace: ${error.stack}`);
+        return null;
+    }
 };
 
 const ensureActivePage = async (context, currentPage) => {
@@ -444,8 +499,15 @@ export const executarScraper = async ({ url, actions }) => {
                 switch (action.type) {
                     case 'goto':
                         console.log(`  Navegando para: ${action.url}`);
+
+                        // Screenshot antes da navegação
+                        await captureDebugScreenshot(currentPage, `pre_goto_acao_${i + 1}`);
+
                         await currentPage.goto(action.url, { waitUntil: 'networkidle' });
                         console.log('  Navegação concluída');
+
+                        // Screenshot após a navegação
+                        await captureDebugScreenshot(currentPage, `pos_goto_acao_${i + 1}`);
 
                         // Aguardar carregamento completo após navegação
                         await new Promise(resolve => setTimeout(resolve, 2000));
@@ -467,12 +529,19 @@ export const executarScraper = async ({ url, actions }) => {
 
                     case 'click': {
                         console.log(`  Clicando no elemento: ${action.xpath}`);
+
+                        // Screenshot antes de qualquer tentativa de clique
+                        await captureDebugScreenshot(currentPage, `pre_click_acao_${i + 1}`);
+
                         let clickSuccess = false;
                         let attempts = 3;
 
                         while (attempts > 0 && !clickSuccess) {
                             try {
                                 console.log(`  Tentativa ${4 - attempts}/3 de clique`);
+
+                                // Screenshot da tentativa atual
+                                await captureDebugScreenshot(currentPage, `click_acao_${i + 1}`, 4 - attempts);
 
                                 // Aguardar um pouco antes de tentar localizar o elemento
                                 await new Promise(resolve => setTimeout(resolve, 2000));
@@ -485,6 +554,9 @@ export const executarScraper = async ({ url, actions }) => {
                                     console.log('  Detectado Google Accounts, aguardando carregamento específico...');
                                     await waitForGoogleAccountSelection(currentPage);
 
+                                    // Screenshot após aguardar o Google
+                                    await captureDebugScreenshot(currentPage, `pos_google_wait_acao_${i + 1}`, 4 - attempts);
+
                                     // NOVA LÓGICA: Verificar se devemos pular para estratégia de login
                                     const currentUrl = currentPage.url();
                                     const isLoginPage = currentUrl.includes('signin/identifier') || currentUrl.includes('signin/v2/identifier');
@@ -493,11 +565,17 @@ export const executarScraper = async ({ url, actions }) => {
                                         console.log('  DETECTADO: Página de login + ação de seleção de conta');
                                         console.log('  APLICANDO ESTRATÉGIA DE LOGIN AUTOMATICAMENTE...');
 
+                                        // Screenshot antes do login automático
+                                        await captureDebugScreenshot(currentPage, `pre_auto_login_acao_${i + 1}`, 4 - attempts);
+
                                         try {
                                             const emailInput = await currentPage.locator('input[type="email"], #identifierId').first();
                                             if (await emailInput.count() > 0) {
                                                 console.log('  Preenchendo campo de email no login...');
                                                 await emailInput.fill('albert.ferreira@itlean.com.br');
+
+                                                // Screenshot após preencher email
+                                                await captureDebugScreenshot(currentPage, `pos_fill_email_acao_${i + 1}`, 4 - attempts);
 
                                                 // Aguardar um pouco
                                                 await new Promise(resolve => setTimeout(resolve, 1000));
@@ -506,13 +584,23 @@ export const executarScraper = async ({ url, actions }) => {
                                                 const nextButton = await currentPage.locator('button:has-text("Próximo"), button:has-text("Next"), button:has-text("Continuar"), button[id*="next"], button[id*="Next"], [jsname="LgbsSe"], button[type="submit"], #identifierNext, [data-primary="true"]').first();
                                                 if (await nextButton.count() > 0) {
                                                     console.log('  Clicando no botão Próximo...');
+
+                                                    // Screenshot antes de clicar no botão
+                                                    await captureDebugScreenshot(currentPage, `pre_click_next_acao_${i + 1}`, 4 - attempts);
+
                                                     await nextButton.click();
                                                     clickSuccess = true;
 
                                                     console.log('  Login executado com sucesso via estratégia automática!');
 
+                                                    // Screenshot após clicar no botão
+                                                    await captureDebugScreenshot(currentPage, `pos_click_next_acao_${i + 1}`, 4 - attempts);
+
                                                     // Aguardar navegação
                                                     await new Promise(resolve => setTimeout(resolve, 3000));
+
+                                                    // Screenshot após aguardar navegação
+                                                    await captureDebugScreenshot(currentPage, `pos_navigation_acao_${i + 1}`, 4 - attempts);
 
                                                     // Verificar se chegamos na página de seleção de conta ou senha
                                                     const newUrl = currentPage.url();
@@ -526,17 +614,26 @@ export const executarScraper = async ({ url, actions }) => {
                                                             currentPage.setDefaultTimeout(0);
                                                             currentPage.setDefaultNavigationTimeout(0);
                                                             console.log('  Alternado para página ativa');
+
+                                                            // Screenshot da nova página ativa
+                                                            await captureDebugScreenshot(currentPage, `nova_pagina_ativa_acao_${i + 1}`, 4 - attempts);
                                                         }
                                                     }
                                                 } else {
                                                     console.log('  Botão Próximo não encontrado');
+                                                    // Screenshot quando botão não é encontrado
+                                                    await captureDebugScreenshot(currentPage, `botao_nao_encontrado_acao_${i + 1}`, 4 - attempts);
                                                 }
                                             } else {
                                                 console.log('  Campo de email não encontrado');
+                                                // Screenshot quando campo de email não é encontrado
+                                                await captureDebugScreenshot(currentPage, `campo_email_nao_encontrado_acao_${i + 1}`, 4 - attempts);
                                             }
                                         } catch (autoLoginError) {
                                             console.log(`  Erro na estratégia automática de login: ${autoLoginError.message}`);
                                             console.log('  Continuando com método tradicional...');
+                                            // Screenshot do erro no login automático
+                                            await captureDebugScreenshot(currentPage, `erro_auto_login_acao_${i + 1}`, 4 - attempts);
                                         }
                                     }
                                 }
@@ -546,24 +643,39 @@ export const executarScraper = async ({ url, actions }) => {
                                     console.log('  Pulando waitForSelector - login já executado');
                                 } else {
                                     // Método tradicional - aguardar o elemento
+                                    // Screenshot antes de aguardar seletor
+                                    await captureDebugScreenshot(currentPage, `pre_wait_selector_acao_${i + 1}`, 4 - attempts);
+
                                     await currentPage.waitForSelector(`xpath=${action.xpath}`, {
                                         timeout: 30000,
                                         state: 'visible'
                                     });
+
+                                    // Screenshot após encontrar elemento
+                                    await captureDebugScreenshot(currentPage, `pos_wait_selector_acao_${i + 1}`, 4 - attempts);
                                 }
 
                                 // Aguardar um pouco mais para garantir que o elemento é clicável
                                 if (!clickSuccess) {
                                     await new Promise(resolve => setTimeout(resolve, 1000));
 
+                                    // Screenshot antes do clique tradicional
+                                    await captureDebugScreenshot(currentPage, `pre_traditional_click_acao_${i + 1}`, 4 - attempts);
+
                                     // Tentar clicar apenas se ainda não foi clicado
                                     await currentPage.click(`xpath=${action.xpath}`, { timeout: 10000 });
                                     console.log('  Clique executado com sucesso');
                                     clickSuccess = true;
+
+                                    // Screenshot após clique tradicional
+                                    await captureDebugScreenshot(currentPage, `pos_traditional_click_acao_${i + 1}`, 4 - attempts);
                                 }
 
                                 // Aguardar um pouco após o clique para possível carregamento
                                 await new Promise(resolve => setTimeout(resolve, 2000));
+
+                                // Screenshot final da tentativa
+                                await captureDebugScreenshot(currentPage, `final_click_attempt_acao_${i + 1}`, 4 - attempts);
 
                                 // Verificar se a página ainda está ativa após o clique
                                 if (currentPage.isClosed()) {
@@ -574,6 +686,9 @@ export const executarScraper = async ({ url, actions }) => {
                                         currentPage.setDefaultTimeout(0);
                                         currentPage.setDefaultNavigationTimeout(0);
                                         console.log('  Alternado para página ativa');
+
+                                        // Screenshot da página ativa após clique
+                                        await captureDebugScreenshot(currentPage, `pagina_ativa_pos_click_acao_${i + 1}`, 4 - attempts);
                                     } else {
                                         throw new Error('Nenhuma página disponível após clique');
                                     }
@@ -582,6 +697,9 @@ export const executarScraper = async ({ url, actions }) => {
                             } catch (clickError) {
                                 attempts--;
                                 console.log(`  Erro no clique (tentativas restantes: ${attempts}): ${clickError.message}`);
+
+                                // Screenshot do erro
+                                await captureDebugScreenshot(currentPage, `erro_click_acao_${i + 1}`, 4 - attempts);
 
                                 if (attempts > 0) {
                                     console.log(`  Aguardando 3 segundos antes da próxima tentativa...`);
@@ -592,12 +710,18 @@ export const executarScraper = async ({ url, actions }) => {
                                         await currentPage.reload({ waitUntil: 'networkidle' });
                                         console.log(`  Página recarregada para nova tentativa`);
                                         await new Promise(resolve => setTimeout(resolve, 2000));
+
+                                        // Screenshot após reload
+                                        await captureDebugScreenshot(currentPage, `pos_reload_acao_${i + 1}`, 4 - attempts);
                                     } catch (reloadError) {
                                         console.log(`  Erro ao recarregar página: ${reloadError.message}`);
                                     }
                                 } else {
                                     // Última tentativa com método alternativo
                                     console.log(`  Última tentativa com método alternativo...`);
+
+                                    // Screenshot antes da última tentativa
+                                    await captureDebugScreenshot(currentPage, `pre_last_attempt_acao_${i + 1}`);
 
                                     // Debug: listar todos os elementos div com data-email
                                     try {
@@ -668,13 +792,9 @@ export const executarScraper = async ({ url, actions }) => {
                                         }
 
                                         if (!emailFound) {
-                                            console.log('  Email não encontrado nos elementos da página');
-
-                                            // Capturar screenshot para debug
+                                            console.log('  Email não encontrado nos elementos da página');                                        // Capturar screenshot para debug
                                             try {
-                                                const debugPath = `/app/debug_google_page_${Date.now()}.png`;
-                                                await currentPage.screenshot({ path: debugPath });
-                                                console.log(`  Screenshot de debug salvo: ${debugPath}`);
+                                                await captureDebugScreenshot(currentPage, `debug_estrutura_pagina_acao_${i + 1}`);
                                             } catch (screenshotError) {
                                                 console.log(`  Erro ao capturar screenshot: ${screenshotError.message}`);
                                             }
@@ -848,6 +968,10 @@ export const executarScraper = async ({ url, actions }) => {
                     case 'type':
                         console.log(`  Digitando no campo: ${action.xpath}`);
                         console.log(`  Valor definido`);
+
+                        // Screenshot antes de digitar
+                        await captureDebugScreenshot(currentPage, `pre_type_acao_${i + 1}`);
+
                         try {
                             await currentPage.fill(`xpath=${action.xpath}`, action.value || '', { timeout: 10000 });
                             console.log('  Texto digitado');
@@ -855,15 +979,24 @@ export const executarScraper = async ({ url, actions }) => {
                             console.log(`  Tentando localizar campo primeiro...`);
                             const element = await currentPage.locator(`xpath=${action.xpath}`).first();
                             if (await element.count() === 0) {
+                                // Screenshot quando elemento não é encontrado
+                                await captureDebugScreenshot(currentPage, `elemento_nao_encontrado_type_acao_${i + 1}`);
                                 throw new Error(`Campo não encontrado: ${action.xpath}`);
                             }
                             await element.fill(action.value || '');
                             console.log('  Texto digitado (segunda tentativa)');
                         }
+
+                        // Screenshot após digitar
+                        await captureDebugScreenshot(currentPage, `pos_type_acao_${i + 1}`);
                         break;
 
                     case 'wait':
                         console.log(`  Aguardando ${action.seconds || 1} segundos...`);
+
+                        // Screenshot antes da espera
+                        await captureDebugScreenshot(currentPage, `pre_wait_acao_${i + 1}`);
+
                         // Verificação adicional antes do wait
                         if (currentPage.isClosed()) {
                             throw new Error('Página foi fechada antes da operação de espera');
@@ -884,10 +1017,16 @@ export const executarScraper = async ({ url, actions }) => {
                             }
                         }
                         console.log('  Espera concluída');
+
+                        // Screenshot após a espera
+                        await captureDebugScreenshot(currentPage, `pos_wait_acao_${i + 1}`);
                         break;
 
                     case 'switchToPopup': {
                         console.log('  Alternando para popup/nova aba...');
+
+                        // Screenshot antes de tentar trocar para popup
+                        await captureDebugScreenshot(currentPage, `pre_switch_popup_acao_${i + 1}`);
 
                         // Verificar se já temos um popup detectado da ação anterior
                         let detectedPopup = null;
@@ -918,9 +1057,15 @@ export const executarScraper = async ({ url, actions }) => {
                                 currentPage = detectedPopup;
                                 console.log('  Alternado para popup detectado com sucesso');
 
+                                // Screenshot do popup detectado
+                                await captureDebugScreenshot(currentPage, `popup_detectado_acao_${i + 1}`);
+
                                 // Aguardar carregamento adicional específico para Google
                                 console.log('  Aguardando carregamento completo da página do Google...');
                                 await new Promise(resolve => setTimeout(resolve, 5000));
+
+                                // Screenshot após aguardar carregamento
+                                await captureDebugScreenshot(currentPage, `popup_carregado_acao_${i + 1}`);
 
                                 // Verificar se a página está realmente carregada
                                 try {
@@ -930,9 +1075,14 @@ export const executarScraper = async ({ url, actions }) => {
                                     console.log('  Timeout na rede, mas continuando...');
                                 }
 
+                                // Screenshot final do popup
+                                await captureDebugScreenshot(currentPage, `popup_final_acao_${i + 1}`);
+
                                 break;
                             } catch (error) {
                                 console.log(`  Erro ao usar popup detectado: ${error.message}`);
+                                // Screenshot do erro
+                                await captureDebugScreenshot(currentPage, `erro_popup_detectado_acao_${i + 1}`);
                                 // Continuar com método normal
                             }
                         }
@@ -1212,6 +1362,13 @@ export const executarScraper = async ({ url, actions }) => {
                 console.error(`Detalhes: ${actionError.message}`);
                 console.error(`Timestamp: ${new Date().toLocaleString('pt-BR')}`);
 
+                // Screenshot do erro
+                try {
+                    await captureDebugScreenshot(currentPage, `erro_acao_${i + 1}_${action.type}`);
+                } catch (screenshotError) {
+                    console.log(`  Erro ao capturar screenshot do erro: ${screenshotError.message}`);
+                }
+
                 // Capturar informações adicionais do estado da página
                 try {
                     if (!currentPage.isClosed()) {
@@ -1244,6 +1401,10 @@ export const executarScraper = async ({ url, actions }) => {
 
         // Garantir que temos uma página ativa para capturar o conteúdo
         currentPage = await ensureActivePage(context, currentPage);
+
+        // Screenshot final de sucesso
+        await captureDebugScreenshot(currentPage, 'final_sucesso');
+
         const finalHtml = await currentPage.content();
         console.log('Conteúdo capturado');
 

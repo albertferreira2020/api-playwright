@@ -1,0 +1,46 @@
+version: "3.8"
+
+services:
+  playwright-scraper:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: playwright-scraper-server
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+    volumes:
+      # Volume para persistir screenshots (opcional)
+      - ./screenshots:/app/screenshots
+      # Volume para logs (opcional)
+      - ./logs:/app/logs
+    networks:
+      - scraper-network
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: "1.0"
+        reservations:
+          memory: 512M
+          cpus: "0.5"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - SYS_ADMIN # Necessário para o Chromium
+    shm_size: 2gb # Importante para o Chromium/Playwright
+
+networks:
+  scraper-network:
+    driver: bridge
+
+volumes:
+  screenshots:
+    driver: local
+  logs:
+    driver: local

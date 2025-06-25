@@ -1,0 +1,63 @@
+version: '3.8'
+
+# Stack para Portainer - Playwright Scraper Server
+# Para usar: copie este conteúdo no Portainer > Stacks > Add Stack > Web editor
+
+services:
+  playwright-scraper:
+    image: playwright-scraper:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: playwright-scraper-server
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      # Adicione outras variáveis conforme necessário
+    volumes:
+      # Volume para screenshots persistentes
+      - screenshots:/app/screenshots
+      # Volume para logs (opcional)
+      - logs:/app/logs
+    networks:
+      - scraper-network
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: '1.0'
+        reservations:
+          memory: 512M
+          cpus: '0.25'
+    # Configurações de segurança
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - SYS_ADMIN  # Necessário para Chromium
+    # Memória compartilhada para Chromium
+    shm_size: 2gb
+    # Labels para Portainer
+    labels:
+      - "io.portainer.accesscontrol.teams=administrators"
+      - "com.docker.compose.project=playwright-scraper"
+
+networks:
+  scraper-network:
+    driver: bridge
+    labels:
+      - "com.docker.compose.project=playwright-scraper"
+
+volumes:
+  screenshots:
+    driver: local
+    labels:
+      - "com.docker.compose.project=playwright-scraper"
+  logs:
+    driver: local
+    labels:
+      - "com.docker.compose.project=playwright-scraper"

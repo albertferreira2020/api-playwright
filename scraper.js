@@ -307,20 +307,83 @@ export const executarScraper = async ({ url, actions }) => {
                                 if (currentPage.url().includes('accounts.google.com')) {
                                     console.log('  Detectado Google Accounts, aguardando carregamento específico...');
                                     await waitForGoogleAccountSelection(currentPage);
+
+                                    // NOVA LÓGICA: Verificar se devemos pular para estratégia de login
+                                    const currentUrl = currentPage.url();
+                                    const isLoginPage = currentUrl.includes('signin/identifier') || currentUrl.includes('signin/v2/identifier');
+
+                                    if (isLoginPage && action.xpath.includes('data-email')) {
+                                        console.log('  DETECTADO: Página de login + ação de seleção de conta');
+                                        console.log('  APLICANDO ESTRATÉGIA DE LOGIN AUTOMATICAMENTE...');
+
+                                        try {
+                                            const emailInput = await currentPage.locator('input[type="email"], #identifierId').first();
+                                            if (await emailInput.count() > 0) {
+                                                console.log('  Preenchendo campo de email no login...');
+                                                await emailInput.fill('albert.ferreira@itlean.com.br');
+
+                                                // Aguardar um pouco
+                                                await new Promise(resolve => setTimeout(resolve, 1000));
+
+                                                // Procurar botão "Próximo" ou "Continuar"
+                                                const nextButton = await currentPage.locator('button:has-text("Próximo"), button:has-text("Next"), button:has-text("Continuar"), button[id*="next"], button[id*="Next"], [jsname="LgbsSe"], button[type="submit"], #identifierNext, [data-primary="true"]').first();
+                                                if (await nextButton.count() > 0) {
+                                                    console.log('  Clicando no botão Próximo...');
+                                                    await nextButton.click();
+                                                    clickSuccess = true;
+
+                                                    console.log('  Login executado com sucesso via estratégia automática!');
+
+                                                    // Aguardar navegação
+                                                    await new Promise(resolve => setTimeout(resolve, 3000));
+
+                                                    // Verificar se chegamos na página de seleção de conta ou senha
+                                                    const newUrl = currentPage.url();
+                                                    console.log(`  Nova URL após inserir email: ${newUrl}`);
+
+                                                    if (currentPage.isClosed()) {
+                                                        console.log('  Página foi fechada após inserir email, procurando página ativa...');
+                                                        const availablePages = context.pages().filter(p => !p.isClosed());
+                                                        if (availablePages.length > 0) {
+                                                            currentPage = availablePages[availablePages.length - 1];
+                                                            currentPage.setDefaultTimeout(0);
+                                                            currentPage.setDefaultNavigationTimeout(0);
+                                                            console.log('  Alternado para página ativa');
+                                                        }
+                                                    }
+                                                } else {
+                                                    console.log('  Botão Próximo não encontrado');
+                                                }
+                                            } else {
+                                                console.log('  Campo de email não encontrado');
+                                            }
+                                        } catch (autoLoginError) {
+                                            console.log(`  Erro na estratégia automática de login: ${autoLoginError.message}`);
+                                            console.log('  Continuando com método tradicional...');
+                                        }
+                                    }
                                 }
 
-                                await currentPage.waitForSelector(`xpath=${action.xpath}`, {
-                                    timeout: 30000,
-                                    state: 'visible'
-                                });
+                                // Se o login automático funcionou, pular para verificação pós-clique
+                                if (clickSuccess) {
+                                    console.log('  Pulando waitForSelector - login já executado');
+                                } else {
+                                    // Método tradicional - aguardar o elemento
+                                    await currentPage.waitForSelector(`xpath=${action.xpath}`, {
+                                        timeout: 30000,
+                                        state: 'visible'
+                                    });
+                                }
 
                                 // Aguardar um pouco mais para garantir que o elemento é clicável
-                                await new Promise(resolve => setTimeout(resolve, 1000));
+                                if (!clickSuccess) {
+                                    await new Promise(resolve => setTimeout(resolve, 1000));
 
-                                // Tentar clicar
-                                await currentPage.click(`xpath=${action.xpath}`, { timeout: 10000 });
-                                console.log('  Clique executado com sucesso');
-                                clickSuccess = true;
+                                    // Tentar clicar apenas se ainda não foi clicado
+                                    await currentPage.click(`xpath=${action.xpath}`, { timeout: 10000 });
+                                    console.log('  Clique executado com sucesso');
+                                    clickSuccess = true;
+                                }
 
                                 // Aguardar um pouco após o clique para possível carregamento
                                 await new Promise(resolve => setTimeout(resolve, 2000));
@@ -467,7 +530,7 @@ export const executarScraper = async ({ url, actions }) => {
                                                     await new Promise(resolve => setTimeout(resolve, 1000));
 
                                                     // Procurar botão "Próximo" ou "Continuar"
-                                                    const nextButton = await currentPage.locator('button:has-text("Próximo"), button:has-text("Next"), button:has-text("Continuar"), button[id*="next"], button[id*="Next"]').first();
+                                                    const nextButton = await currentPage.locator('button:has-text("Próximo"), button:has-text("Next"), button:has-text("Continuar"), button[id*="next"], button[id*="Next"], [jsname="LgbsSe"], button[type="submit"], #identifierNext, [data-primary="true"]').first();
                                                     if (await nextButton.count() > 0) {
                                                         console.log('  Clicando no botão Próximo...');
                                                         await nextButton.click();

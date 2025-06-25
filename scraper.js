@@ -11,34 +11,86 @@ const waitForGoogleAccountSelection = async (page) => {
         console.log('    Timeout no carregamento do DOM');
     }
 
-    // Aguardar múltiplos indicadores que a página carregou
-    const selectors = [
-        'div[data-email]',
-        '[data-identifier]',
-        '.w6VTHd', // Classe comum em páginas do Google
-        '[role="button"]',
-        '.VV3oRb', // Outro seletor comum
-        '#headingText', // Título da página do Google
-        'form', // Qualquer formulário
-        '.LXRPh', // Container de contas
-        'li[data-account-type]', // Items de conta
-        '[jsname]' // Elementos com jsname (comum no Google)
-    ];
+    // Verificar qual tipo de página do Google estamos
+    const url = page.url();
+    console.log(`    URL atual: ${url}`);
 
-    let selectorFound = false;
-    for (const selector of selectors) {
-        try {
-            await page.waitForSelector(selector, { timeout: 8000, state: 'visible' });
-            console.log(`    Encontrado seletor: ${selector}`);
-            selectorFound = true;
-            break;
-        } catch (error) {
-            console.log(`    Seletor ${selector} não encontrado, tentando próximo...`);
+    // Detectar se é página de login (inserir email) vs página de seleção de conta
+    const isLoginPage = url.includes('signin/identifier') || url.includes('signin/v2/identifier');
+    const isAccountSelectionPage = url.includes('selectaccount') || url.includes('oauth/selectaccount');
+
+    if (isLoginPage) {
+        console.log('    Detectada página de LOGIN (inserir email)');
+        // Aguardar elementos de input de email
+        const loginSelectors = [
+            'input[type="email"]',
+            'input[id="identifierId"]',
+            '#identifierId',
+            'input[name="identifier"]',
+            '[data-initial-value]'
+        ];
+
+        for (const selector of loginSelectors) {
+            try {
+                await page.waitForSelector(selector, { timeout: 8000, state: 'visible' });
+                console.log(`    Encontrado seletor de login: ${selector}`);
+                break;
+            } catch (error) {
+                console.log(`    Seletor de login ${selector} não encontrado, tentando próximo...`);
+            }
         }
-    }
+    } else if (isAccountSelectionPage) {
+        console.log('    Detectada página de SELEÇÃO DE CONTA');
+        // Aguardar elementos de seleção de conta
+        const selectionSelectors = [
+            'div[data-email]',
+            '[data-identifier]',
+            'li[data-account-type]',
+            '.LXRPh'
+        ];
 
-    if (!selectorFound) {
-        console.log('    Nenhum seletor específico encontrado, tentando aguardar rede...');
+        for (const selector of selectionSelectors) {
+            try {
+                await page.waitForSelector(selector, { timeout: 8000, state: 'visible' });
+                console.log(`    Encontrado seletor de seleção: ${selector}`);
+                break;
+            } catch (error) {
+                console.log(`    Seletor de seleção ${selector} não encontrado, tentando próximo...`);
+            }
+        }
+    } else {
+        console.log('    Tipo de página não identificado, tentando seletores gerais...');
+        // Aguardar múltiplos indicadores que a página carregou
+        const selectors = [
+            'div[data-email]',
+            '[data-identifier]',
+            '.w6VTHd', // Classe comum em páginas do Google
+            '[role="button"]',
+            '.VV3oRb', // Outro seletor comum
+            '#headingText', // Título da página do Google
+            'form', // Qualquer formulário
+            '.LXRPh', // Container de contas
+            'li[data-account-type]', // Items de conta
+            '[jsname]', // Elementos com jsname (comum no Google)
+            'input[type="email"]', // Campo de email
+            '#identifierId' // ID específico do campo de email
+        ];
+
+        let selectorFound = false;
+        for (const selector of selectors) {
+            try {
+                await page.waitForSelector(selector, { timeout: 8000, state: 'visible' });
+                console.log(`    Encontrado seletor: ${selector}`);
+                selectorFound = true;
+                break;
+            } catch (error) {
+                console.log(`    Seletor ${selector} não encontrado, tentando próximo...`);
+            }
+        }
+
+        if (!selectorFound) {
+            console.log('    Nenhum seletor específico encontrado, tentando aguardar rede...');
+        }
     }
 
     // Aguardar rede estabilizar com timeout maior
@@ -55,19 +107,22 @@ const waitForGoogleAccountSelection = async (page) => {
 
     // Debug: Verificar estrutura da página
     try {
-        const url = page.url();
         const title = await page.title();
-        console.log(`    URL da página: ${url}`);
         console.log(`    Título da página: ${title}`);
 
         // Contar elementos comuns
         const divCount = await page.locator('div').count();
         const buttonCount = await page.locator('button').count();
-        console.log(`    Elementos div: ${divCount}, buttons: ${buttonCount}`);
+        const inputCount = await page.locator('input').count();
+        console.log(`    Elementos div: ${divCount}, buttons: ${buttonCount}, inputs: ${inputCount}`);
 
-        // Verificar se há elementos com data-email
+        // Verificar se há elementos com data-email (seleção de conta)
         const emailElements = await page.locator('div[data-email]').count();
         console.log(`    Elementos com data-email: ${emailElements}`);
+
+        // Verificar se há campo de email (página de login)
+        const emailInputs = await page.locator('input[type="email"], #identifierId').count();
+        console.log(`    Campos de email: ${emailInputs}`);
 
     } catch (debugError) {
         console.log(`    Erro no debug: ${debugError.message}`);
@@ -317,6 +372,30 @@ export const executarScraper = async ({ url, actions }) => {
                                             console.log('  AVISO: Não estamos na página do Google!');
                                         }
 
+                                        // Detectar tipo de página do Google
+                                        const isLoginPage = currentUrl.includes('signin/identifier') || currentUrl.includes('signin/v2/identifier');
+                                        const isAccountSelectionPage = currentUrl.includes('selectaccount') || currentUrl.includes('oauth/selectaccount');
+
+                                        if (isLoginPage) {
+                                            console.log('  DETECTADO: Página de LOGIN do Google (inserir email)');
+                                            console.log('  Isso significa que não há contas salvas ou precisamos inserir o email manualmente');
+
+                                            // Verificar se há campo de email disponível
+                                            const emailInputs = await currentPage.locator('input[type="email"], #identifierId').count();
+                                            console.log(`  Campos de email encontrados: ${emailInputs}`);
+
+                                            if (emailInputs > 0) {
+                                                console.log('  ESTRATÉGIA: Inserir email no campo de input');
+                                                // Esta é uma página de login, não de seleção de conta
+                                                // Precisamos inserir o email no campo de input
+                                                throw new Error('PÁGINA_LOGIN_DETECTADA: Não é página de seleção de conta. Precisamos inserir o email no campo de input.');
+                                            }
+                                        } else if (isAccountSelectionPage) {
+                                            console.log('  DETECTADO: Página de SELEÇÃO DE CONTA do Google');
+                                        } else {
+                                            console.log('  DETECTADO: Página do Google de tipo desconhecido');
+                                        }
+
                                         // Procurar elementos com data-email
                                         const emailElements = await currentPage.locator('div[data-email]').all();
                                         console.log(`  Encontrados ${emailElements.length} elementos com data-email`);
@@ -369,90 +448,148 @@ export const executarScraper = async ({ url, actions }) => {
                                         // Tentar diferentes estratégias de seleção
                                         let element = null;
 
-                                        // Estratégia 1: XPath original
-                                        try {
-                                            element = await currentPage.locator(`xpath=${action.xpath}`).first();
-                                            if (await element.count() > 0) {
-                                                console.log('  Elemento encontrado com XPath original');
-                                            } else {
-                                                element = null;
-                                            }
-                                        } catch (xpathError) {
-                                            console.log('  XPath original falhou');
-                                            element = null;
-                                        }
+                                        // Verificar primeiro se estamos numa página de login
+                                        const currentUrl = currentPage.url();
+                                        const isLoginPage = currentUrl.includes('signin/identifier') || currentUrl.includes('signin/v2/identifier');
 
-                                        // Estratégia 2: Seletor por data-email
-                                        if (!element) {
-                                            try {
-                                                element = await currentPage.locator('div[data-email="albert.ferreira@itlean.com.br"]').first();
-                                                if (await element.count() > 0) {
-                                                    console.log('  Elemento encontrado com seletor data-email');
-                                                } else {
-                                                    element = null;
-                                                }
-                                            } catch (dataEmailError) {
-                                                console.log('  Seletor data-email falhou');
-                                                element = null;
-                                            }
-                                        }
+                                        if (isLoginPage) {
+                                            console.log('  DETECTADO: Página de login - tentando inserir email no campo de input');
 
-                                        // Estratégia 3: Seletor por texto
-                                        if (!element) {
+                                            // Esta é uma página de login, não de seleção
+                                            // Vamos tentar inserir o email no campo de input
                                             try {
-                                                element = await currentPage.locator('text=albert.ferreira@itlean.com.br').first();
-                                                if (await element.count() > 0) {
-                                                    console.log('  Elemento encontrado com seletor de texto');
-                                                } else {
-                                                    element = null;
-                                                }
-                                            } catch (textSelectorError) {
-                                                console.log('  Seletor de texto falhou');
-                                                element = null;
-                                            }
-                                        }
+                                                const emailInput = await currentPage.locator('input[type="email"], #identifierId').first();
+                                                if (await emailInput.count() > 0) {
+                                                    console.log('  Preenchendo campo de email...');
+                                                    await emailInput.fill('albert.ferreira@itlean.com.br');
 
-                                        // Estratégia 4: Procurar qualquer div que contenha o email
-                                        if (!element) {
-                                            try {
-                                                const divs = await currentPage.locator('div').all();
-                                                for (const div of divs) {
-                                                    try {
-                                                        const text = await div.textContent();
-                                                        if (text && text.includes('albert.ferreira@itlean.com.br')) {
-                                                            element = div;
-                                                            console.log('  Elemento encontrado por busca em divs');
-                                                            break;
+                                                    // Aguardar um pouco
+                                                    await new Promise(resolve => setTimeout(resolve, 1000));
+
+                                                    // Procurar botão "Próximo" ou "Continuar"
+                                                    const nextButton = await currentPage.locator('button:has-text("Próximo"), button:has-text("Next"), button:has-text("Continuar"), button[id*="next"], button[id*="Next"]').first();
+                                                    if (await nextButton.count() > 0) {
+                                                        console.log('  Clicando no botão Próximo...');
+                                                        await nextButton.click();
+                                                        clickSuccess = true;
+
+                                                        // Aguardar navegação
+                                                        await new Promise(resolve => setTimeout(resolve, 3000));
+
+                                                        // Verificar se chegamos na página de seleção de conta ou senha
+                                                        const newUrl = currentPage.url();
+                                                        console.log(`  Nova URL após inserir email: ${newUrl}`);
+
+                                                        if (currentPage.isClosed()) {
+                                                            console.log('  Página foi fechada após inserir email, procurando página ativa...');
+                                                            const availablePages = context.pages().filter(p => !p.isClosed());
+                                                            if (availablePages.length > 0) {
+                                                                currentPage = availablePages[availablePages.length - 1];
+                                                                currentPage.setDefaultTimeout(0);
+                                                                currentPage.setDefaultNavigationTimeout(0);
+                                                                console.log('  Alternado para página ativa');
+                                                            }
                                                         }
-                                                    } catch (divError) {
-                                                        // Continuar procurando
+                                                    } else {
+                                                        console.log('  Botão Próximo não encontrado, tentando outras estratégias...');
                                                     }
+                                                } else {
+                                                    console.log('  Campo de email não encontrado');
                                                 }
-                                            } catch (divSearchError) {
-                                                console.log('  Busca em divs falhou');
+                                            } catch (loginError) {
+                                                console.log(`  Erro ao tentar inserir email: ${loginError.message}`);
                                             }
                                         }
 
-                                        if (!element || await element.count() === 0) {
-                                            throw new Error(`Elemento não encontrado com nenhuma estratégia: ${action.xpath}`);
+                                        // Se ainda não teve sucesso, tentar as estratégias originais
+                                        if (!clickSuccess) {
+                                            // Estratégia 1: XPath original
+                                            try {
+                                                element = await currentPage.locator(`xpath=${action.xpath}`).first();
+                                                if (await element.count() > 0) {
+                                                    console.log('  Elemento encontrado com XPath original');
+                                                } else {
+                                                    element = null;
+                                                }
+                                            } catch (xpathError) {
+                                                console.log('  XPath original falhou');
+                                                element = null;
+                                            }
+
+                                            // Estratégia 2: Seletor por data-email
+                                            if (!element) {
+                                                try {
+                                                    element = await currentPage.locator('div[data-email="albert.ferreira@itlean.com.br"]').first();
+                                                    if (await element.count() > 0) {
+                                                        console.log('  Elemento encontrado com seletor data-email');
+                                                    } else {
+                                                        element = null;
+                                                    }
+                                                } catch (dataEmailError) {
+                                                    console.log('  Seletor data-email falhou');
+                                                    element = null;
+                                                }
+                                            }
+
+                                            // Estratégia 3: Seletor por texto
+                                            if (!element) {
+                                                try {
+                                                    element = await currentPage.locator('text=albert.ferreira@itlean.com.br').first();
+                                                    if (await element.count() > 0) {
+                                                        console.log('  Elemento encontrado com seletor de texto');
+                                                    } else {
+                                                        element = null;
+                                                    }
+                                                } catch (textSelectorError) {
+                                                    console.log('  Seletor de texto falhou');
+                                                    element = null;
+                                                }
+                                            }
+
+                                            // Estratégia 4: Procurar qualquer div que contenha o email
+                                            if (!element) {
+                                                try {
+                                                    const divs = await currentPage.locator('div').all();
+                                                    for (const div of divs) {
+                                                        try {
+                                                            const text = await div.textContent();
+                                                            if (text && text.includes('albert.ferreira@itlean.com.br')) {
+                                                                element = div;
+                                                                console.log('  Elemento encontrado por busca em divs');
+                                                                break;
+                                                            }
+                                                        } catch (divError) {
+                                                            // Continuar procurando
+                                                        }
+                                                    }
+                                                } catch (divSearchError) {
+                                                    console.log('  Busca em divs falhou');
+                                                }
+                                            }
+
+                                            if (element && await element.count() > 0) {
+                                                await element.click();
+                                                console.log('  Clique executado (método alternativo)');
+                                                clickSuccess = true;
+                                            } else if (!clickSuccess) {
+                                                throw new Error(`Elemento não encontrado com nenhuma estratégia: ${action.xpath}`);
+                                            }
                                         }
 
-                                        await element.click();
-                                        console.log('  Clique executado (método alternativo)');
-                                        clickSuccess = true;
-
-                                        // Mesma verificação pós-clique
-                                        await new Promise(resolve => setTimeout(resolve, 2000));
-                                        if (currentPage.isClosed()) {
-                                            console.log('  Página foi fechada após o clique, tentando encontrar página ativa...');
-                                            const availablePages = context.pages().filter(p => !p.isClosed());
-                                            if (availablePages.length > 0) {
-                                                currentPage = availablePages[availablePages.length - 1];
-                                                currentPage.setDefaultTimeout(0);
-                                                currentPage.setDefaultNavigationTimeout(0);
-                                                console.log('  Alternado para página ativa');
-                                            } else {
-                                                throw new Error('Nenhuma página disponível após clique');
+                                        // Verificação pós-clique (apenas se houve clique)
+                                        if (clickSuccess) {
+                                            await new Promise(resolve => setTimeout(resolve, 2000));
+                                            if (currentPage.isClosed()) {
+                                                console.log('  Página foi fechada após o clique, tentando encontrar página ativa...');
+                                                const availablePages = context.pages().filter(p => !p.isClosed());
+                                                if (availablePages.length > 0) {
+                                                    currentPage = availablePages[availablePages.length - 1];
+                                                    currentPage.setDefaultTimeout(0);
+                                                    currentPage.setDefaultNavigationTimeout(0);
+                                                    console.log('  Alternado para página ativa');
+                                                } else {
+                                                    throw new Error('Nenhuma página disponível após clique');
+                                                }
                                             }
                                         }
                                     } catch (alternativeError) {
